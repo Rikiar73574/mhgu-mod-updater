@@ -164,7 +164,7 @@ def parse_sums(data):
     return result
 
 
-def download_release(client, release, spec):
+def download_asset(client, release, spec):
     expected = digest_of(release.asset)
     if release.checksum:
         sums = client.request(release.checksum['browser_download_url'], 1024 * 1024)
@@ -185,7 +185,11 @@ def download_release(client, release, spec):
         raise UpdateError(f'{spec.name}: SHA-256 checksum mismatch; nothing installed')
     if len(data) != size:
         raise UpdateError(f'{spec.name}: release asset length mismatch')
-    return validate_archive(data, spec)
+    return data
+
+
+def download_release(client, release, spec):
+    return validate_archive(download_asset(client, release, spec), spec)
 
 
 def safe_zip_name(name):
@@ -281,35 +285,173 @@ def plain_tree(root):
                 raise UpdateError(f'Special file in installed mod: {path}')
 
 
-def find_target(game, spec):
-    mods = game / 'mods'
+def discover_plugins(mods):
+    """Find core files at any depth without following links or junctions."""
     require_plain(mods)
     if mods.exists() and not mods.is_dir():
         raise UpdateError(f'Mods path is not a directory: {mods}')
-    found = []
+    plain_tree(mods)
+    return [Path(directory)/name for directory, _, names in os.walk(mods, followlinks=False)
+            for name in names if name.casefold().endswith('.nro')]
+
+
+@dataclass(frozen=True)
+class Installation:
+    target: Path
+    core: Path | None
+    content: Path | None
+    misplaced: bool
+
+
+def top_folder(mods, path):
+    return mods / path.relative_to(mods).parts[0]
+
+
+def find_target(game, spec, plugins):
+    mods = game / 'mods'
+    found = [p for p in plugins if p.name.casefold() == spec.nro.casefold()]
+    if len(found) > 1:
+        raise UpdateError(f'Duplicate {spec.nro} installations; resolve these copies first: ' + ', '.join(map(str, found)))
     canonical = mods / spec.folder
     for child in mods.iterdir() if mods.exists() else []:
-        if child.name.casefold() == spec.folder.casefold():
+        if child.name.upper().casefold() == spec.folder.upper().casefold():
             canonical = child
             require_plain(child)
-        candidate = child / spec.nro_path
-        if candidate.is_file():
-            require_plain(child)
-            for parent in candidate.parents:
-                if parent == mods:
-                    break
-                require_plain(parent)
-            require_plain(candidate)
-            found.append(child)
-    if len(found) > 1:
-        raise UpdateError(f'Duplicate {spec.nro} installations; resolve these folders first: ' + ', '.join(map(str, found)))
     if found:
-        return found[0], True
+        core = found[0]
+        proper = tuple(p.casefold() for p in core.parts[-4:-1]) == ('romfs', 'nativenx', 'plugins')
+        content = core.parents[3] if proper else core.parent
+        outer = top_folder(mods, core)
+        # Keep a custom folder name when it belongs to this mod alone. A shared
+        # wrapper is split into canonical folders without promoting other mods.
+        isolated = outer.is_dir() and sum(p.is_relative_to(outer) for p in plugins) == 1
+        target = outer if content == outer or content != mods and isolated else canonical
+        if target.exists() and not core.is_relative_to(target) and (not target.is_dir() or any(target.iterdir())):
+            raise UpdateError(f'{target} exists without the expected mod; refusing to overwrite it')
+        if content != mods and content != target and any(p != core and p.is_relative_to(content) for p in plugins):
+            raise UpdateError(f'Multiple plugins share the same folder: {content}; separate them before updating')
+        return Installation(target, core, content, core != target/spec.nro_path)
     require_plain(canonical)
     if canonical.exists():
         if not canonical.is_dir() or any(canonical.iterdir()):
             raise UpdateError(f'{canonical} exists without the expected mod; refusing to overwrite it')
-    return canonical, False
+    return Installation(canonical, None, None, False)
+
+
+def promote_content(source, target, core, managed):
+    """Move custom files into the usable layout; never guess between settings."""
+    for directory, dirs, names in os.walk(source):
+        relative = Path(directory).relative_to(source)
+        destination = target/relative
+        if destination.exists() and not destination.is_dir():
+            raise UpdateError(f'Custom file conflicts with repaired directory: {destination}')
+        destination.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            original = Path(directory)/name
+            if original == core:
+                continue  # The verified release supplies the core in its proper path.
+            relative_file = relative/name
+            path = target/relative_file
+            if path.exists():
+                if relative_file.as_posix() in managed:
+                    continue
+                if not path.is_file() or path.read_bytes() != original.read_bytes():
+                    raise UpdateError(f'Conflicting custom files while repairing: {relative_file}')
+            else:
+                shutil.copy2(original, path)
+
+
+def stage_changes(mods, temporary, plans):
+    """Stage whole top-level units, including shared wrappers, exactly once."""
+    units = {}
+    for _, installation, _, _ in plans:
+        paths = [installation.target]
+        if installation.misplaced:
+            paths.append(top_folder(mods, installation.core))
+        for path in paths:
+            if path in units:
+                continue
+            stage = Path(temporary)/str(len(units))
+            if path.is_dir():
+                plain_tree(path)
+                shutil.copytree(path, stage)
+            elif path.is_file():
+                shutil.copy2(path, stage)
+            else:
+                stage.mkdir()
+            units[path] = stage
+    # Remove misplaced originals in the staged copy before promoting anything;
+    # a target folder can also contain another mod's old wrapper.
+    for _, installation, _, _ in plans:
+        if not installation.misplaced:
+            continue
+        content = installation.content
+        remove = content if content != mods and content != installation.target else installation.core
+        unit = top_folder(mods, remove)
+        path = units[unit]/remove.relative_to(unit)
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        parent = path.parent
+        while parent != units[unit] and parent.is_relative_to(units[unit]) and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+    for _, installation, files, _ in plans:
+        stage = units[installation.target]
+        if installation.misplaced and installation.content not in (mods, installation.target):
+            promote_content(installation.content, stage, installation.core, files)
+        for name, data in files.items():
+            path = stage/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_dir():
+                raise UpdateError(f'Installed custom directory conflicts with release file: {name}')
+            path.write_bytes(data)
+    for stage in units.values():
+        if stage.is_dir() and not any(stage.iterdir()):
+            stage.rmdir()  # Retire an empty extraction wrapper into the backup.
+    return units
+
+
+def stage_load_order(mods, temporary, units, plans):
+    """Keep disabled source wrappers off while making fresh installs usable."""
+    order = mods/'load_order.txt'
+    original = order.read_bytes() if order.is_file() else b''
+    try:
+        lines = original.decode('utf-8').splitlines()
+    except UnicodeError as error:
+        raise UpdateError('Cannot read load_order.txt as UTF-8; nothing installed') from error
+    modern = bool(lines and lines[0].lstrip(' \t').startswith('# Written by the Mods tab'))
+    listed = {line.strip() for line in lines if not line.lstrip().startswith('#')}
+    disabled = {line.strip()[7:].casefold() for line in lines if line.strip().startswith('# off: ')}
+    added = []
+    for _, location, _, _ in plans:
+        source = top_folder(mods, location.core) if location.core else None
+        name = location.target.name
+        if source == location.target or name in listed or name.casefold() in disabled:
+            continue
+        source_off = source is not None and source.is_dir() and (
+            source.name.casefold() in disabled or
+            (not modern and order.is_file() and source.name not in listed) or
+            (not order.exists() and source.name.startswith('_')))
+        if source_off:
+            if modern or not order.exists():
+                added.append('# off: '+name)
+        elif order.exists() and not modern:
+            added.append(name)
+    if not added:
+        return
+    if not order.exists():
+        # A new UI-style list changes unlisted '_' folders to enabled too, so
+        # carry all their existing default-off choices into the new list.
+        original = b'# Written by the Mods tab\n'
+        added = ['# off: '+p.name for p in sorted(mods.iterdir())
+                 if p.is_dir() and p.name.startswith('_')] + added
+    ending = b'\r\n' if b'\r\n' in original else b'\n'
+    prefix = original + (ending if original and not original.endswith((b'\n', b'\r')) else b'')
+    stage = Path(temporary)/str(len(units))
+    stage.write_bytes(prefix + ending.join(name.encode('utf-8') for name in added) + ending)
+    units[order] = stage
 
 
 def assert_game_closed(running):
@@ -325,6 +467,8 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
     client = client or GitHubClient()
     with game_lock(game):
         assert_game_closed(running)
+        mods = game/'mods'
+        plugins = discover_plugins(mods)
         results, plans, targets = [], [], {}
         for spec in MODS:
             log(f'Checking {spec.name}...')
@@ -333,7 +477,9 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
                 log(f'{spec.name}: no stable release is available; skipped.')
                 results.append(Result(spec.name, 'no-release'))
                 continue
-            target, existing = find_target(game, spec)
+            installation = find_target(game, spec, plugins)
+            target = installation.target
+            existing = installation.core is not None
             key = str(target).casefold()
             if key in targets:
                 raise UpdateError(f'{spec.name} and {targets[key]} share the same folder: {target}; separate them before updating')
@@ -342,7 +488,7 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
             files = download_release(client, release, spec)
             if existing:
                 plain_tree(target)
-            current = existing and all(
+            current = existing and not installation.misplaced and all(
                 (target/name).is_file() and sha256((target/name).read_bytes()) == sha256(data)
                 for name, data in files.items()
             )
@@ -350,9 +496,9 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
                 log(f'{spec.name}: already up to date ({release.version}).')
                 results.append(Result(spec.name, 'current', release.version, str(target)))
                 continue
-            result = Result(spec.name, 'available', release.version, str(target))
+            result = Result(spec.name, 'repair-needed' if installation.misplaced else 'available', release.version, str(target))
             results.append(result)
-            plans.append((spec, target, existing, files, result))
+            plans.append((spec, installation, files, result))
         if check or not plans:
             return results
         # Nothing in installed mod folders changes until every download, path,
@@ -360,27 +506,14 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
         assert_game_closed(running)
         require_plain(game / 'backups')
         with tempfile.TemporaryDirectory(prefix='.mhgu-update-', dir=game) as temporary:
-            staged = []
-            for index, (spec, target, existing, files, result) in enumerate(plans):
-                stage = Path(temporary) / str(index)
-                if existing:
-                    plain_tree(target)
-                    shutil.copytree(target, stage)
-                else:
-                    stage.mkdir()
-                for name, data in files.items():
-                    path = stage / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    if path.is_dir():
-                        raise UpdateError(f'Installed custom directory conflicts with release file: {name}')
-                    path.write_bytes(data)
-                staged.append((spec, target, existing, stage, result))
+            staged = stage_changes(mods, temporary, plans)
+            stage_load_order(mods, temporary, staged, plans)
             assert_game_closed(running)
             backup = game / 'backups' / ('mod-updater-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
             backup.mkdir(parents=True)
             moved = []
             try:
-                for spec, target, existing, stage, result in staged:
+                for target, stage in staged.items():
                     assert_game_closed(running)
                     require_plain(target)
                     require_plain(target.parent)
@@ -392,11 +525,8 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
                     moved.append((target, saved, had_folder, stage))
                     if had_folder:
                         os.replace(target, saved)
-                    os.replace(stage, target)
-                    result.status = 'updated' if existing else 'installed'
-                    log(f'{spec.name}: {result.status} to {result.version}.')
-                    if not existing:
-                        log(f'{spec.name}: enable {target.name} in the game\'s mod settings. Existing load order was preserved.')
+                    if stage.exists():
+                        os.replace(stage, target)
             except BaseException as error:
                 failures = []
                 for target, saved, had_folder, stage in reversed(moved):
@@ -416,5 +546,8 @@ def update_game(game_dir, *, check=False, client=None, running=None, log=print):
                 detail = '; rollback needs attention: ' + '; '.join(failures) if failures else '; previous mods restored'
                 reason = 'cancelled' if isinstance(error, KeyboardInterrupt) else str(error)
                 raise UpdateError(f'Update failed: {reason}{detail}. Backup: {backup}') from error
+            for spec, installation, _, result in plans:
+                result.status = 'repaired' if installation.misplaced else 'updated' if installation.core else 'installed'
+                log(f'{spec.name}: {result.status} to {result.version}.')
             log(f'Backup: {backup}')
         return results

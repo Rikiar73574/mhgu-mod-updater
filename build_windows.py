@@ -56,7 +56,8 @@ def main():
     )
     source_hashes = {
         name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        for name in ('launcher.py', 'updater.py', 'windows_ui.py', 'build_windows.py')
+        for name in ('launcher.py', 'updater.py', 'self_update.py', 'windows_ui.py', 'build_windows.py',
+                     'assets/updater.ico', 'assets/updater.png')
     }
     buildinfo = {
         'application': 'MHGU-Mod-Updater',
@@ -75,7 +76,7 @@ def main():
     import PyInstaller.__main__
     PyInstaller.__main__.run([
         '--noconfirm', '--clean', '--noupx', '--onefile', '--console',
-        '--name', 'MHGU-Mod-Updater',
+        '--name', 'MHGU-Mod-Updater', '--icon', str(ROOT / 'assets' / 'updater.ico'),
         '--distpath', str(ROOT / 'dist'),
         '--workpath', str(ROOT / 'build' / 'windows-work'),
         '--specpath', str(ROOT / 'build'),

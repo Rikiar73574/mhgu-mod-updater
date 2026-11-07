@@ -5,6 +5,7 @@ import sys
 
 from updater import update_game
 from windows_ui import choose_game_dir
+from self_update import VERSION, apply_job, maybe_self_update
 
 
 def default_game_dir():
@@ -27,11 +28,17 @@ def main(argv=None):
     parser.add_argument('--check', action='store_true', help='Check and verify releases without installing or prompting')
     parser.add_argument('--no-pause', action='store_true', help='Do not wait for Enter when finished')
     parser.add_argument('--licenses', action='store_true', help='Print the bundled software license notices')
+    parser.add_argument('--version', action='version', version='MHGU Mod Updater '+VERSION)
+    parser.add_argument('--no-self-update', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--apply-self-update', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.licenses:
         show_licenses()
         return 0
+    if args.apply_self_update is not None:
+        return apply_job(args.apply_self_update)
     code = 0
+    handoff = False
     print('MHGU Mod Updater\nArmor Fusion | HuntLog | Hunter\'s Compendium\n')
     try:
         game = args.game_dir or default_game_dir()
@@ -47,6 +54,10 @@ def main(argv=None):
                 print('Cancelled. No mods changed.')
                 return 0
         print(f'Game folder: {game}\n')
+        handoff = maybe_self_update(game_dir=game, check=args.check, no_self_update=args.no_self_update,
+                                    no_pause=args.no_pause)
+        if handoff:
+            return 0
         result = update_game(game, check=args.check)
         if args.check:
             for item in result:
@@ -58,7 +69,7 @@ def main(argv=None):
         print(f'\nERROR: {error}')
         code = 1
     finally:
-        if not args.no_pause and not args.check:
+        if not handoff and not args.no_pause and not args.check:
             try:
                 input('\nPress Enter to close...')
             except (EOFError, KeyboardInterrupt):

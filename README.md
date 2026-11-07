@@ -16,14 +16,28 @@ If the updater is elsewhere, select `mhgurecomp.exe` when prompted. No Python
 installation is needed. It checks the three projects' latest stable GitHub
 releases each time you run it; draft and pre-release builds are skipped.
 
+It also checks for a newer updater release. A verified self-update keeps a
+backup of the previous EXE, restarts the new version, then continues with the
+mods. Users of v0.1.0 must download v0.1.1 or newer once to gain this feature.
+
 Downloads are verified before installation. Existing mod folders are backed up
 under the game's `backups` directory. Saves, journals, wishlist data and other
 mods are preserved. Duplicate copies of a managed plugin must be resolved
 before updating. The updater does not close the game or change its executable.
 
-Existing custom mod-folder names are detected from their plugin files. A first
-installation uses the standard folder name; enable the mod in Forge if needed.
-Keep the executable and run it again whenever you want to check for updates.
+Core plugin files are found recursively, regardless of folder names. Extra
+wrapper folders and loose core files are repaired into the correct layout;
+custom fonts and settings move with the mod. Bundles containing separate mod
+folders are split into working installations. Conflicting custom files or
+duplicate core files stop the update before anything is replaced.
+
+Missing mods are installed automatically. Existing mod order and disabled
+choices are retained, including disabled wrappers that must be split during
+repair. Older handwritten load-order lists are updated only as needed for new
+installations. Keep the EXE and run it again whenever you want updates.
+
+The whetstone icon uses the same MHGU pixel-sprite style as the game and its
+updater. See the bundled icon notice for the artwork's provenance and rights.
 
 ## Source
 
@@ -31,7 +45,7 @@ The updater uses Python's standard library. Its Windows executable bundles
 CPython and the PyInstaller bootloader. Authored code is MIT; bundled components
 retain their own licenses. The executable's `--licenses` option displays them.
 
-All 37 regression cases passed on Windows CPython under Wine. The packaged EXE
+Regression cases run on Windows CPython under Wine. The packaged EXE
 installed all three public releases in a disposable game folder without Python
 installed, preserved its save/settings/other-mod fixtures, and left every file
 unchanged on a second run. Running-game refusal and rollback were also tested.

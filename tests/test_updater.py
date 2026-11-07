@@ -136,13 +136,12 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(self.run_update()[0].status,'current')
         self.assertFalse((self.game/'backups').exists())
 
-    def test_new_install_uses_canonical_folder_and_reports_enable_instruction(self):
+    def test_new_install_uses_canonical_folder(self):
         self.release()
         messages=[]
         result=updater.update_game(self.game,client=self.client,running=lambda:False,log=messages.append)
         self.assertEqual(result[0].status,'installed')
         self.assertTrue((self.game/'mods'/self.spec.folder/self.spec.nro_path).is_file())
-        self.assertTrue(any('enable' in m.lower() for m in messages))
 
     def test_duplicate_expected_nros_refused_without_removing_either(self):
         a=self.install_old(folder='one');b=self.install_old(folder='two');self.release()
@@ -285,6 +284,163 @@ class CoreTests(unittest.TestCase):
     def test_windows_uppercase_alias_collision_is_rejected(self):
         with self.assertRaises(updater.UpdateError):
             updater.validate_archive(archive({self.spec.nro_path:nro(),'LICENSE':b'one','LıCENSE':b'two'}),self.spec)
+
+    def test_double_wrapped_mod_is_promoted_and_backed_up(self):
+        inner=self.install_old(folder='Custom Armor/package/release');self.release()
+        outer=self.game/'mods/Custom Armor';(outer/'outer-settings.ini').write_bytes(b'outer settings')
+        result=self.run_update()
+        self.assertEqual(result[0].status,'repaired')
+        self.assertEqual((outer/self.spec.nro_path).read_bytes(),nro())
+        self.assertEqual((outer/'my-settings.ini').read_text(),'personal settings')
+        self.assertEqual((outer/'font/mine.otf').read_bytes(),b'user font')
+        self.assertEqual((outer/'outer-settings.ini').read_bytes(),b'outer settings')
+        self.assertEqual(list(outer.rglob(self.spec.nro)),[outer/self.spec.nro_path])
+        backup=next((self.game/'backups').glob('mod-updater-*/Custom Armor'))
+        self.assertEqual((backup/'package/release'/self.spec.nro_path).read_bytes(),nro(b'old'))
+
+    def test_current_payload_in_wrong_canonical_wrapper_still_repairs(self):
+        inner=self.install_old(folder=self.spec.folder+'/nested');self.release()
+        files=updater.validate_archive(next(data for url,data in self.payloads.items() if url.endswith('.zip')),self.spec)
+        for name,data in files.items():
+            path=inner/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
+        before={str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file()}
+        self.assertEqual(self.run_update(check=True)[0].status,'repair-needed')
+        self.assertEqual(before,{str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file()})
+        self.assertEqual(self.run_update()[0].status,'repaired')
+        self.assertFalse(inner.exists())
+        before={str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file()}
+        self.assertEqual(self.run_update()[0].status,'current')
+        self.assertEqual(before,{str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file()})
+
+    def test_bare_core_in_custom_folder_gains_correct_layout(self):
+        outer=self.game/'mods/Custom Armor';outer.mkdir(parents=True)
+        (outer/self.spec.nro).write_bytes(nro(b'old'));(outer/'personal.ini').write_bytes(b'keep')
+        self.release();self.assertEqual(self.run_update()[0].status,'repaired')
+        self.assertEqual((outer/self.spec.nro_path).read_bytes(),nro())
+        self.assertEqual((outer/'personal.ini').read_bytes(),b'keep')
+        self.assertFalse((outer/self.spec.nro).exists())
+
+    def test_loose_core_under_mods_is_backed_up_without_moving_mods_root(self):
+        mods=self.game/'mods';mods.mkdir();loose=mods/self.spec.nro;loose.write_bytes(nro(b'old'))
+        (mods/'load_order.txt').write_bytes(b'keep');self.release()
+        self.assertEqual(self.run_update()[0].status,'repaired')
+        self.assertFalse(loose.exists());self.assertEqual((mods/'load_order.txt').read_bytes(),b'keep\n'+self.spec.folder.encode()+b'\n')
+        self.assertEqual((mods/self.spec.folder/self.spec.nro_path).read_bytes(),nro())
+        backup=next((self.game/'backups').glob('mod-updater-*'))
+        self.assertEqual((backup/self.spec.nro).read_bytes(),nro(b'old'))
+        self.assertEqual((backup/'load_order.txt').read_bytes(),b'keep')
+
+    def test_shared_wrapper_splits_managed_mods_and_preserves_other_mod(self):
+        for spec in updater.MODS:self.install_old(spec,folder='Bundle/'+spec.folder);self.release(spec)
+        other=self.game/'mods/Bundle/Other/romfs/nativeNX/plugins/other.nro'
+        other.parent.mkdir(parents=True);other.write_bytes(nro(b'other'))
+        self.assertEqual([r.status for r in self.run_update()],['repaired']*3)
+        self.assertEqual(other.read_bytes(),nro(b'other'))
+        for spec in updater.MODS:
+            self.assertEqual((self.game/'mods'/spec.folder/spec.nro_path).read_bytes(),nro())
+            self.assertFalse((self.game/'mods/Bundle'/spec.folder).exists())
+            self.assertEqual((self.game/'mods'/spec.folder/'my-settings.ini').read_text(),'personal settings')
+
+    def test_romfs_directly_under_mods_is_split_without_touching_unmanaged_files(self):
+        for spec in updater.MODS:
+            p=self.game/'mods'/spec.nro_path;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(nro(b'old'))
+            self.release(spec)
+        other=self.game/'mods/romfs/other.bin';other.write_bytes(b'keep')
+        self.assertEqual([r.status for r in self.run_update()],['repaired']*3)
+        self.assertEqual(other.read_bytes(),b'keep')
+        for spec in updater.MODS:
+            self.assertFalse((self.game/'mods'/spec.nro_path).exists())
+            self.assertEqual((self.game/'mods'/spec.folder/spec.nro_path).read_bytes(),nro())
+
+    def test_recursive_duplicates_refuse_without_changes(self):
+        a=self.install_old(folder='Custom');b=self.install_old(folder='Other/deep/wrapper');self.release()
+        with self.assertRaisesRegex(updater.UpdateError,'[Dd]uplicate'):self.run_update()
+        self.assertEqual((a/self.spec.nro_path).read_bytes(),nro(b'old'))
+        self.assertEqual((b/self.spec.nro_path).read_bytes(),nro(b'old'))
+        self.assertFalse((self.game/'backups').exists())
+
+    def test_repair_rollback_restores_original_nested_layout(self):
+        for spec in updater.MODS:self.install_old(spec,folder='Bundle/'+spec.folder);self.release(spec)
+        before={str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file()}
+        real=updater.os.replace;last=self.game/'mods'/updater.MODS[-1].folder
+        def fail(source,target):
+            if Path(target)==last and '.mhgu-update-' in str(source):raise OSError('last repair swap failed')
+            return real(source,target)
+        with patch.object(updater.os,'replace',side_effect=fail),self.assertRaises(updater.UpdateError):self.run_update()
+        after={str(p.relative_to(self.game)):p.read_bytes() for p in self.game.rglob('*') if p.is_file() and 'backups' not in p.relative_to(self.game).parts}
+        self.assertEqual(after,before)
+
+    def test_correct_custom_folder_keeps_its_additional_plugin(self):
+        root=self.install_old(folder='Custom Armor');self.release()
+        helper=root/'romfs/nativeNX/plugins/helper.nro';helper.write_bytes(nro(b'helper'))
+        self.assertEqual(self.run_update()[0].status,'updated')
+        self.assertEqual(helper.read_bytes(),nro(b'helper'))
+
+    def test_conflicting_custom_settings_stop_repair_before_changes(self):
+        inner=self.install_old(folder='Custom Armor/package');outer=inner.parent
+        (outer/'my-settings.ini').write_bytes(b'different outer preferences');self.release()
+        with self.assertRaisesRegex(updater.UpdateError,'[Cc]onflicting custom'):
+            self.run_update()
+        self.assertEqual((inner/self.spec.nro_path).read_bytes(),nro(b'old'))
+        self.assertEqual((outer/'my-settings.ini').read_bytes(),b'different outer preferences')
+        self.assertFalse((self.game/'backups').exists())
+
+    def test_all_three_missing_mods_are_installed_in_a_fresh_game(self):
+        for spec in updater.MODS:self.release(spec)
+        self.assertFalse((self.game/'mods').exists())
+        self.assertEqual([r.status for r in self.run_update()],['installed']*3)
+        for spec in updater.MODS:
+            self.assertEqual((self.game/'mods'/spec.folder/spec.nro_path).read_bytes(),nro())
+
+    def test_new_install_is_added_to_manual_load_order_without_reordering(self):
+        mods=self.game/'mods';mods.mkdir();order=mods/'load_order.txt'
+        original=b'Other mod\r\n# my ordering\r\n';order.write_bytes(original);self.release()
+        self.run_update(check=True);self.assertEqual(order.read_bytes(),original)
+        self.run_update()
+        self.assertEqual(order.read_bytes(),original+self.spec.folder.encode()+b'\r\n')
+        backup=next((self.game/'backups').glob('mod-updater-*/load_order.txt'))
+        self.assertEqual(backup.read_bytes(),original)
+
+    def test_new_install_keeps_ui_generated_load_order_unchanged(self):
+        mods=self.game/'mods';mods.mkdir();order=mods/'load_order.txt'
+        original=b'# Written by the Mods tab of the settings menu\nOther mod\n';order.write_bytes(original)
+        self.release();self.run_update();self.assertEqual(order.read_bytes(),original)
+
+    def test_install_preserves_explicitly_disabled_mod_preference(self):
+        mods=self.game/'mods';mods.mkdir();order=mods/'load_order.txt'
+        original=b'# off: armor-fusion\nOther mod\n';order.write_bytes(original)
+        self.release();self.run_update();self.assertEqual(order.read_bytes(),original)
+
+    def test_load_order_swap_failure_restores_both_order_and_mods(self):
+        mods=self.game/'mods';mods.mkdir();order=mods/'load_order.txt';order.write_bytes(b'Other\n')
+        self.release();real=updater.os.replace
+        def fail(source,target):
+            if Path(target)==order and '.mhgu-update-' in str(source):raise OSError('order write failed')
+            return real(source,target)
+        with patch.object(updater.os,'replace',side_effect=fail),self.assertRaises(updater.UpdateError):self.run_update()
+        self.assertEqual(order.read_bytes(),b'Other\n')
+        self.assertFalse((mods/self.spec.folder).exists())
+
+    def test_disabled_ui_wrapper_stays_disabled_when_split(self):
+        for spec in updater.MODS:self.install_old(spec,folder='Bundle/'+spec.folder);self.release(spec)
+        order=self.game/'mods/load_order.txt';original=b'# Written by the Mods tab\n# off: Bundle\n'
+        order.write_bytes(original);self.run_update()
+        self.assertTrue(order.read_bytes().startswith(original))
+        for spec in updater.MODS:self.assertIn('# off: '+spec.folder,order.read_text().splitlines())
+
+    def test_unlisted_manual_wrapper_does_not_enable_relocated_targets(self):
+        for spec in updater.MODS:self.install_old(spec,folder='Bundle/'+spec.folder);self.release(spec)
+        order=self.game/'mods/load_order.txt';order.write_bytes(b'Other\n')
+        self.run_update();self.assertEqual(order.read_bytes(),b'Other\n')
+
+    def test_underscore_wrapper_keeps_off_state_without_previous_order_file(self):
+        for spec in updater.MODS:self.install_old(spec,folder='_Bundle/'+spec.folder);self.release(spec)
+        other=self.game/'mods/_Other/personal.ini';other.parent.mkdir();other.write_bytes(b'keep')
+        self.run_update();order=self.game/'mods/load_order.txt'
+        self.assertTrue(order.read_text().startswith('# Written by the Mods tab'))
+        for name in [spec.folder for spec in updater.MODS]+['_Other']:
+            self.assertIn('# off: '+name,order.read_text().splitlines())
+        self.assertEqual(other.read_bytes(),b'keep')
 
 
 if __name__=='__main__':unittest.main()

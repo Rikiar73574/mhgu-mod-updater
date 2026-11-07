@@ -1,0 +1,37 @@
+MHGU Mod Updater icon artwork
+
+assets/updater.png and assets/updater.ico contain the Whetstone item/UI
+sprite from Monster Hunter Generations Ultimate (Nintendo Switch, v1.4.0).
+Monster Hunter and the underlying game artwork are copyright CAPCOM CO., LTD.
+The artwork is not covered by this application's MIT license. No separate
+open-source license for this game sprite is asserted.
+
+Source: the user's local game dump, read without modifying game files:
+  romfs/nativeNX/eng/GUI/99_texture/HD_cmn_icon_GSM_NOMIP.tex
+  SHA-256: ce5e88735346f4b86177e9408e2a16888de472f42351666a78ce5f8c48c9c415
+
+Item identification is backed by the same local game data: English name-table
+slot 56 in eng/table/itemData_eng.gmd is "Whetstone". The corresponding item
+record in romfs/nativeNX/table/itemData.itm is record 56, at byte offset 0x9a8
+(8-byte header, 44-byte records). Its icon byte at record offset 16 is 42.
+Index 42 in the texture's ten-column, 32-pixel item grid is column 2, row 4:
+the exact x=64, y=128 crop used below.
+  itemData.itm SHA-256:
+  b6880dcc8e846458c6781587456c1ce6138e440de2e90fe42230f5b9d9535b53
+
+Extraction: decode the 512 x 1024 BGRA8 Tegra block-linear surface (24-byte
+TEX header, block-height log2 4), then crop x=64, y=128, width=32, height=32.
+Each source pixel is repeated 2 x 2; recovering the 16 x 16 sprite is lossless.
+The ICO contains 16, 24, 32, 48, 64, 128 and 256 pixel entries. Each entry
+uses nearest-neighbor scaling and centers the visible sprite on transparency;
+no colors, smoothing, generated artwork or additional symbols were added.
+
+Style reference: the installed MHGURecomp 0.14.2 executable icons are the
+pixel greatsword and Palico sprites. The official release describes these as
+sprites from the game:
+  https://github.com/morerokk/MHGURecomp/releases/tag/0.14.2
+Their executable resource sources are recorded here:
+  https://github.com/morerokk/MHGURecomp/tree/3beb53fd332d378c2308f7d5d54e2eda80729af1/extras/icon
+
+Only this small item sprite is included; the source texture atlas and game
+files are not distributed with this application.

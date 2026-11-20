@@ -2,7 +2,7 @@
 
 A portable Windows updater for [Armor Fusion](https://github.com/Rikiar73574/mhgu-armor-fusion),
 [HuntLog](https://github.com/Rikiar73574/mhgu-huntlog) and
-[Hunter's Compendium](https://github.com/Rikiar73574/mhgu-compendium).
+[MHGU Utility](https://github.com/Rikiar73574/mhgu-utility).
 
 [Download MHGU-Mod-Updater.exe](https://github.com/Rikiar73574/mhgu-mod-updater/releases/latest/download/MHGU-Mod-Updater.exe)
 

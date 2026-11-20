@@ -50,7 +50,7 @@ class Mod:
 MODS = (
     Mod('Armor Fusion', 'mhgu-armor-fusion', 'native-armor-fusion.zip', 'armor-fusion', 'armor_fusion.nro'),
     Mod('HuntLog', 'mhgu-huntlog', 'huntlog-mod.zip', 'HuntLog', 'hunter_hud.nro'),
-    Mod("Hunter's Compendium", 'mhgu-compendium', 'hunters-compendium.zip', 'hunters-compendium', 'hunters_compendium.nro'),
+    Mod("MHGU Utility", 'mhgu-utility', 'hunters-compendium.zip', 'hunters-compendium', 'hunters_compendium.nro'),
 )
 
 

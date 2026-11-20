@@ -52,7 +52,7 @@ class SelfUpdateTests(unittest.TestCase):
 
         self.client = Client()
 
-    def release(self, version='v0.1.2', data=None, digest=None):
+    def release(self, version='v0.1.3', data=None, digest=None):
         spec = self_update.SELF
         data = self.new if data is None else data
         url = f'https://github.com/Rikiar73574/mhgu-mod-updater/releases/download/{version}/MHGU-Mod-Updater.exe'

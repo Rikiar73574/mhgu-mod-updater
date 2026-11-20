@@ -25,6 +25,11 @@ under the game's `backups` directory. Saves, journals, wishlist data and other
 mods are preserved. Duplicate copies of a managed plugin must be resolved
 before updating. The updater does not close the game or change its executable.
 
+MHGU Utility was previously named Hunter’s Compendium. Existing installations
+are recognized by `hunters_compendium.nro`, so you do not need to rename folders
+or reinstall. Downloads now come from `mhgu-utility`; the legacy ZIP and plugin
+filenames are intentionally retained for compatibility.
+
 Core plugin files are found recursively, regardless of folder names. Extra
 wrapper folders and loose core files are repaired into the correct layout;
 custom fonts and settings move with the mod. Bundles containing separate mod

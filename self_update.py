@@ -15,7 +15,7 @@ import time
 from updater import GitHubClient, UpdateError, assert_game_closed, download_asset, require_plain, sha256
 from windows_ui import game_lock, game_running
 
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 
 
 @dataclass(frozen=True)

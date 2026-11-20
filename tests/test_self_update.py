@@ -52,7 +52,9 @@ class SelfUpdateTests(unittest.TestCase):
 
         self.client = Client()
 
-    def release(self, version='v0.1.3', data=None, digest=None):
+    def release(self, version=None, data=None, digest=None):
+        major, minor, patch_version = self_update.version_tuple(self_update.VERSION)
+        version = version or f'v{major}.{minor}.{patch_version+1}'
         spec = self_update.SELF
         data = self.new if data is None else data
         url = f'https://github.com/Rikiar73574/mhgu-mod-updater/releases/download/{version}/MHGU-Mod-Updater.exe'
@@ -72,7 +74,7 @@ class SelfUpdateTests(unittest.TestCase):
         return self_update.stage_job(self.target, self.new, self.game, no_pause=True)
 
     def test_only_greater_semantic_versions_upgrade(self):
-        for version in ['v0.1.1', 'v0.1.0', 'v0.0.99']:
+        for version in [self_update.VERSION, 'v0.1.2', 'v0.0.99']:
             with self.subTest(version=version):
                 self.release(version)
                 self.assertFalse(self.run_check())

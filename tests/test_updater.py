@@ -94,6 +94,19 @@ class CoreTests(unittest.TestCase):
     def run_update(self, **kwargs):
         return updater.update_game(self.game, client=self.client, running=lambda:False, log=lambda _:None, **kwargs)
 
+    def test_utility_updates_legacy_compendium_without_duplicate_install(self):
+        spec = updater.MODS[2]
+        self.assertEqual(spec.name, 'MHGU Utility')
+        self.assertEqual(spec.repo, 'mhgu-utility')
+        old = self.install_old(spec, folder='My Compendium')
+        self.release(spec)
+        result = self.run_update()[2]
+        self.assertEqual(result.name, 'MHGU Utility')
+        self.assertEqual((old/spec.nro_path).read_bytes(), nro())
+        self.assertEqual((old/'my-settings.ini').read_text(), 'personal settings')
+        self.assertEqual(list((self.game/'mods').iterdir()), [old])
+        self.assertIn(spec.api_url, self.requests)
+
     def test_no_stable_releases_is_polite_and_changes_nothing(self):
         result = self.run_update()
         self.assertEqual([r.status for r in result], ['no-release']*3)

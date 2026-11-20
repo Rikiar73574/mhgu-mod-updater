@@ -15,6 +15,14 @@ class LauncherTests(unittest.TestCase):
                 self.assertEqual(launcher.main(['--game-dir',directory,'--check']),0)
                 self.assertTrue(update.call_args.kwargs['check'])
 
+    def test_banner_uses_current_mod_names(self):
+        with patch.object(launcher, 'maybe_self_update', return_value=False), \
+             patch.object(launcher, 'update_game', return_value=[]), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(launcher.main(['--game-dir', 'chosen', '--check']), 0)
+        self.assertIn('MHGU Utility', output.getvalue())
+        self.assertNotIn("Hunter's Compendium", output.getvalue())
+
     def test_picker_selection_requires_confirmation_before_install(self):
         with patch.object(launcher,'default_game_dir',return_value=None),patch.object(launcher,'choose_game_dir',return_value=Path('chosen')),patch('builtins.input',return_value='n'),patch.object(launcher,'update_game') as update,contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(launcher.main(['--no-pause']),0)

@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from updater import update_game
+from updater import MODS, update_game
 from windows_ui import choose_game_dir
 from self_update import VERSION, apply_job, maybe_self_update
 
@@ -23,7 +23,7 @@ def show_licenses():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Update Armor Fusion, HuntLog and Hunter\'s Compendium from their latest stable GitHub releases.')
+    parser = argparse.ArgumentParser(description='Update '+', '.join(mod.name for mod in MODS)+' from their latest stable GitHub releases.')
     parser.add_argument('--game-dir', type=Path, help='Folder containing mhgurecomp.exe')
     parser.add_argument('--check', action='store_true', help='Check and verify releases without installing or prompting')
     parser.add_argument('--no-pause', action='store_true', help='Do not wait for Enter when finished')
@@ -39,7 +39,7 @@ def main(argv=None):
         return apply_job(args.apply_self_update)
     code = 0
     handoff = False
-    print('MHGU Mod Updater\nArmor Fusion | HuntLog | Hunter\'s Compendium\n')
+    print('MHGU Mod Updater\n'+' | '.join(mod.name for mod in MODS)+'\n')
     try:
         game = args.game_dir or default_game_dir()
         if game is None:
